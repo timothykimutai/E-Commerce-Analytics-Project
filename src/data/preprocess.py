@@ -135,6 +135,12 @@ def preprocess_data(df):
     # Make a copy to avoid modifying the original
     df_clean = df.copy()
     
+    # Validate required columns
+    required_columns = ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'Quantity', 'UnitPrice']
+    missing_columns = [col for col in required_columns if col not in df_clean.columns]
+    if missing_columns:
+        raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+    
     # Convert InvoiceDate to datetime if it's not already
     if not pd.api.types.is_datetime64_any_dtype(df_clean['InvoiceDate']):
         df_clean['InvoiceDate'] = pd.to_datetime(df_clean['InvoiceDate'])
@@ -151,6 +157,21 @@ def preprocess_data(df):
     
     # Add Year-Month for time-based analysis
     df_clean['YearMonth'] = df_clean['InvoiceDate'].dt.to_period('M')
+    
+    # Ensure all required columns are present and have correct types
+    df_clean['CustomerID'] = df_clean['CustomerID'].astype(str)
+    df_clean['InvoiceNo'] = df_clean['InvoiceNo'].astype(str)
+    df_clean['Quantity'] = df_clean['Quantity'].astype(float)
+    df_clean['UnitPrice'] = df_clean['UnitPrice'].astype(float)
+    df_clean['TotalAmount'] = df_clean['TotalAmount'].astype(float)
+    
+    # Remove any rows with missing values in required columns
+    df_clean = df_clean.dropna(subset=required_columns)
+    
+    # Debug logging
+    print("Debug - Preprocessed data shape:", df_clean.shape)
+    print("Debug - Preprocessed data columns:", df_clean.columns.tolist())
+    print("Debug - Preprocessed data sample:\n", df_clean.head())
     
     return df_clean
 
