@@ -18,8 +18,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create directory for model files
-RUN mkdir -p models
+# Create directories for data and models
+RUN mkdir -p models data
+
+# Create and initialize SQLite database
+RUN python -c "from src.database.user_db import Base, engine; Base.metadata.create_all(bind=engine)"
 
 # Expose port
 EXPOSE 8000

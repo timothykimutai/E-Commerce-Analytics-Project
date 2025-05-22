@@ -1,18 +1,22 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 import uvicorn
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import yaml
 import os
+from sqlalchemy.orm import Session
 
 from src.data.preprocess import preprocess_data, generate_sample_data
 from src.models.customer_segmentation import perform_rfm_analysis, perform_customer_clustering
 from src.models.recommendation import hybrid_recommendation, collaborative_filtering, content_based_recommendation
 from src.models.churn_prediction import prepare_churn_features, train_churn_model, predict_churn_probability
+from src.models.user import User, UserInDB, Token, create_access_token, verify_password, ACCESS_TOKEN_EXPIRE_MINUTES
+from src.database.user_db import get_db, get_user, create_user, get_all_users, update_user, delete_user
 
 # Load configuration
 def load_config():
@@ -97,6 +101,9 @@ data_store = {
     'feature_importance': None,
     'churn_predictions': None
 }
+
+# Add OAuth2 scheme
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @app.post("/upload-data")
 async def upload_data(file: UploadFile = File(...)):
@@ -352,6 +359,102 @@ async def get_customer_details(customer_id: str):
         return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# Add authentication endpoints
+@app.post("/token", response_model=Token)
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    user = get_user(db, form_data.username)
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/users/", response_model=User)
+async def create_new_user(user: User, password: str, db: Session = Depends(get_db)):
+    db_user = get_user(db, user.username)
+    if db_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    return create_user(db, user, password)
+
+@app.get("/users/me/", response_model=User)
+async def read_users_me(
+    current_user: User = Depends(get_current_user)
+):
+    return current_user
+
+@app.get("/users/", response_model=List[User])
+async def read_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    users = get_all_users(db)
+    return users[skip : skip + limit]
+
+@app.put("/users/{user_id}", response_model=User)
+async def update_user_endpoint(
+    user_id: int,
+    user_data: dict,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    updated_user = update_user(db, user_id, user_data)
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return updated_user
+
+@app.delete("/users/{user_id}")
+async def delete_user_endpoint(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    if delete_user(db, user_id):
+        return {"message": "User deleted successfully"}
+    raise HTTPException(status_code=404, detail="User not found")
+
+# Add dependency functions
+async def get_current_user(
+    token: str = Depends(oauth2_scheme),
+    db: Session = Depends(get_db)
+):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = verify_token(token)
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except:
+        raise credentials_exception
+    user = get_user(db, username)
+    if user is None:
+        raise credentials_exception
+    return user
+
+async def get_current_admin_user(
+    current_user: User = Depends(get_current_user)
+):
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    return current_user
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000) 
