@@ -9,7 +9,21 @@ warnings.filterwarnings('ignore')
 np.random.seed(42)
 
 
-def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000, start_date="2024-01-01", end_date="2025-05-01"):
+def generate_sample_data(
+    n_customers=1000,
+    n_products=200,
+    n_transactions=10000,
+    start_date="2024-01-01",
+    end_date="2025-05-01",
+    product_categories=None,
+    min_price=5,
+    max_price=200,
+    min_quantity=1,
+    max_quantity=5,
+    min_items_per_invoice=1,
+    max_items_per_invoice=5,
+    price_variation_range=(0.95, 1.05)
+):
     """
     Generate sample e-commerce transaction data.
     
@@ -19,6 +33,14 @@ def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000,
         n_transactions: Number of transactions to generate
         start_date: Starting date for transactions
         end_date: End date for transactions
+        product_categories: List of product categories (default: None, will use default categories)
+        min_price: Minimum product price
+        max_price: Maximum product price
+        min_quantity: Minimum quantity per product
+        max_quantity: Maximum quantity per product
+        min_items_per_invoice: Minimum items per invoice
+        max_items_per_invoice: Maximum items per invoice
+        price_variation_range: Tuple of (min, max) for price variation factor
         
     Returns:
         DataFrame with columns: CustomerID, InvoiceNo, ProductID, Description, Quantity, UnitPrice, InvoiceDate
@@ -26,14 +48,16 @@ def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000,
     # Create customer IDs
     customer_ids = [f'C{i:05d}' for i in range(1, n_customers + 1)]
     
-    # Create product info
-    product_categories = ['Electronics', 'Clothing', 'Home', 'Beauty', 'Sports', 'Books', 'Toys', 'Food', 'Health']
+    # Use default categories if none provided
+    if product_categories is None:
+        product_categories = ['Electronics', 'Clothing', 'Home', 'Beauty', 'Sports', 'Books', 'Toys', 'Food', 'Health']
+    
     products = []
     
     for i in range(1, n_products + 1):
         cat = np.random.choice(product_categories)
         name = f"{cat} Item {i}"
-        price = round(np.random.uniform(5, 200), 2)
+        price = round(np.random.uniform(min_price, max_price), 2)
         product_id = f"P{i:05d}"
         products.append((product_id, name, cat, price))
     
@@ -67,8 +91,8 @@ def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000,
         invoice_no = f"INV{invoice_counter:06d}"
         invoice_counter += 1
         
-        # Determine how many items in this invoice (1-10)
-        n_items = np.random.randint(1, 6)
+        # Determine how many items in this invoice
+        n_items = np.random.randint(min_items_per_invoice, max_items_per_invoice + 1)
         
         # Select products for this invoice (weighted)
         selected_products = np.random.choice(range(len(products)), size=n_items, replace=False, p=product_weights)
@@ -76,11 +100,11 @@ def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000,
         for prod_idx in selected_products:
             product_id, description, category, base_price = products[prod_idx]
             
-            # Add small price variations
-            unit_price = round(base_price * np.random.uniform(0.95, 1.05), 2)
+            # Add price variations
+            unit_price = round(base_price * np.random.uniform(*price_variation_range), 2)
             
-            # Determine quantity (usually 1-5)
-            quantity = np.random.randint(1, 6)
+            # Determine quantity
+            quantity = np.random.randint(min_quantity, max_quantity + 1)
             
             transactions.append([
                 customer, 
@@ -109,34 +133,45 @@ def generate_sample_data(n_customers=1000, n_products=200, n_transactions=10000,
     
     return df
 
-def load_data():
+def load_data(config=None):
     """
     Load data or generate sample data if file doesn't exist
     
+    Args:
+        config: Dictionary containing configuration parameters for data generation
+        
     Returns:
         DataFrame with transaction data
     """
-    # For this project, we'll generate sample data
+    # Use default config if none provided
+    if config is None:
+        config = {}
     
-    df = generate_sample_data()
+    # Generate sample data with config parameters
+    df = generate_sample_data(**config)
     print(f"Generated sample data with {df['CustomerID'].nunique()} customers and {df['InvoiceNo'].nunique()} transactions")
     return df
 
-def preprocess_data(df):
+def preprocess_data(df, config=None):
     """
     Clean and preprocess the transaction data
     
     Args:
         df: Raw transaction DataFrame
+        config: Dictionary containing configuration parameters for preprocessing
         
     Returns:
         Cleaned DataFrame
     """
+    # Use default config if none provided
+    if config is None:
+        config = {}
+    
     # Make a copy to avoid modifying the original
     df_clean = df.copy()
     
-    # Validate required columns
-    required_columns = ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'Quantity', 'UnitPrice']
+    # Get required columns from config or use defaults
+    required_columns = config.get('required_columns', ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'Quantity', 'UnitPrice'])
     missing_columns = [col for col in required_columns if col not in df_clean.columns]
     if missing_columns:
         raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
@@ -146,10 +181,12 @@ def preprocess_data(df):
         df_clean['InvoiceDate'] = pd.to_datetime(df_clean['InvoiceDate'])
     
     # Filter out any potential negative quantities or returns
-    df_clean = df_clean[df_clean['Quantity'] > 0]
+    min_quantity = config.get('min_quantity', 0)
+    df_clean = df_clean[df_clean['Quantity'] > min_quantity]
     
     # Filter out any potential zero or negative prices
-    df_clean = df_clean[df_clean['UnitPrice'] > 0]
+    min_price = config.get('min_price', 0)
+    df_clean = df_clean[df_clean['UnitPrice'] > min_price]
     
     # Calculate TotalAmount if it doesn't exist
     if 'TotalAmount' not in df_clean.columns:
@@ -159,11 +196,17 @@ def preprocess_data(df):
     df_clean['YearMonth'] = df_clean['InvoiceDate'].dt.to_period('M')
     
     # Ensure all required columns are present and have correct types
-    df_clean['CustomerID'] = df_clean['CustomerID'].astype(str)
-    df_clean['InvoiceNo'] = df_clean['InvoiceNo'].astype(str)
-    df_clean['Quantity'] = df_clean['Quantity'].astype(float)
-    df_clean['UnitPrice'] = df_clean['UnitPrice'].astype(float)
-    df_clean['TotalAmount'] = df_clean['TotalAmount'].astype(float)
+    type_mapping = config.get('type_mapping', {
+        'CustomerID': str,
+        'InvoiceNo': str,
+        'Quantity': float,
+        'UnitPrice': float,
+        'TotalAmount': float
+    })
+    
+    for col, dtype in type_mapping.items():
+        if col in df_clean.columns:
+            df_clean[col] = df_clean[col].astype(dtype)
     
     # Remove any rows with missing values in required columns
     df_clean = df_clean.dropna(subset=required_columns)

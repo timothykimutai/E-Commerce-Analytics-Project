@@ -1,0 +1,46 @@
+# Data Generation Configuration
+data_generation:
+  n_customers: 1000
+  n_products: 200
+  n_transactions: 10000
+  start_date: '2024-01-01'
+  end_date: '2025-05-01'
+  product_categories:
+    - Electronics
+    - Clothing
+    - Home
+    - Beauty
+    - Sports
+    - Books
+    - Toys
+    - Food
+    - Health
+  min_price: 5
+  max_price: 200
+  min_quantity: 1
+  max_quantity: 5
+  min_items_per_invoice: 1
+  max_items_per_invoice: 5
+  price_variation_range: [0.95, 1.05]
+
+# Data Preprocessing Configuration
+preprocessing:
+  required_columns:
+    - CustomerID
+    - InvoiceDate
+    - InvoiceNo
+    - Quantity
+    - UnitPrice
+  min_quantity: 0
+  min_price: 0
+  type_mapping:
+    CustomerID: str
+    InvoiceNo: str
+    Quantity: float
+    UnitPrice: float
+    TotalAmount: float
+
+# Churn Analysis Configuration
+churn_analysis:
+  high_risk_threshold: 0.7
+  top_risk_customers: 10 

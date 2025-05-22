@@ -6,12 +6,66 @@ from typing import Dict, List, Optional, Tuple
 import uvicorn
 import json
 from datetime import datetime
+import yaml
+import os
 
 from src.data.preprocess import preprocess_data, generate_sample_data
 from src.models.customer_segmentation import perform_rfm_analysis, perform_customer_clustering
 from src.models.recommendation import hybrid_recommendation, collaborative_filtering, content_based_recommendation
 from src.models.churn_prediction import prepare_churn_features, train_churn_model, predict_churn_probability
 
+# Load configuration
+def load_config():
+    """Load configuration from config.yaml or use defaults"""
+    default_config = {
+        'data_generation': {
+            'n_customers': 1000,
+            'n_products': 200,
+            'n_transactions': 10000,
+            'start_date': '2024-01-01',
+            'end_date': '2025-05-01',
+            'product_categories': ['Electronics', 'Clothing', 'Home', 'Beauty', 'Sports', 'Books', 'Toys', 'Food', 'Health'],
+            'min_price': 5,
+            'max_price': 200,
+            'min_quantity': 1,
+            'max_quantity': 5,
+            'min_items_per_invoice': 1,
+            'max_items_per_invoice': 5,
+            'price_variation_range': [0.95, 1.05]
+        },
+        'preprocessing': {
+            'required_columns': ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'Quantity', 'UnitPrice'],
+            'min_quantity': 0,
+            'min_price': 0,
+            'type_mapping': {
+                'CustomerID': 'str',
+                'InvoiceNo': 'str',
+                'Quantity': 'float',
+                'UnitPrice': 'float',
+                'TotalAmount': 'float'
+            }
+        },
+        'churn_analysis': {
+            'high_risk_threshold': 0.7,
+            'top_risk_customers': 10
+        }
+    }
+    
+    try:
+        if os.path.exists('config.yaml'):
+            with open('config.yaml', 'r') as f:
+                config = yaml.safe_load(f)
+                # Merge with defaults for any missing values
+                for key, value in default_config.items():
+                    if key not in config:
+                        config[key] = value
+                return config
+    except Exception as e:
+        print(f"Error loading config: {str(e)}")
+    
+    return default_config
+
+# Initialize FastAPI app
 app = FastAPI(
     title="E-Commerce Analytics API",
     description="API for e-commerce data analysis and customer insights",
@@ -21,11 +75,14 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Load configuration
+config = load_config()
 
 # Global variables to store data
 data_store = {
@@ -51,13 +108,13 @@ async def upload_data(file: UploadFile = File(...)):
         df = pd.read_csv(file.file)
         
         # Validate required columns
-        required_columns = ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'TotalAmount']
+        required_columns = config['preprocessing']['required_columns']
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise HTTPException(status_code=400, detail=f"Missing required columns: {', '.join(missing_columns)}")
         
         # Preprocess the data
-        df = preprocess_data(df)
+        df = preprocess_data(df, config['preprocessing'])
         
         # Store the processed data
         data_store['data'] = df
@@ -72,7 +129,7 @@ async def generate_sample():
     Generate sample transaction data
     """
     try:
-        df = generate_sample_data()
+        df = generate_sample_data(**config['data_generation'])
         data_store['data'] = df
         return {"message": "Sample data generated successfully", "rows": len(df)}
     except Exception as e:
@@ -150,7 +207,7 @@ async def get_churn_analysis():
             )
         
         # Validate required columns
-        required_columns = ['CustomerID', 'InvoiceDate', 'InvoiceNo', 'TotalAmount', 'Quantity', 'UnitPrice']
+        required_columns = config['preprocessing']['required_columns']
         missing_columns = [col for col in required_columns if col not in data_store['data'].columns]
         if missing_columns:
             raise HTTPException(
@@ -225,9 +282,9 @@ async def get_churn_analysis():
         try:
             response = {
                 "churn_rate": float(churn_predictions['ChurnProbability'].mean()),
-                "high_risk_customers": int((churn_predictions['ChurnProbability'] > 0.7).sum()),
+                "high_risk_customers": int((churn_predictions['ChurnProbability'] > config['churn_analysis']['high_risk_threshold']).sum()),
                 "feature_importance": data_store['feature_importance'].to_dict(),
-                "top_risk_customers": churn_predictions.head(10).to_dict()
+                "top_risk_customers": churn_predictions.head(config['churn_analysis']['top_risk_customers']).to_dict()
             }
             print("Debug - Response prepared successfully")
             return response
